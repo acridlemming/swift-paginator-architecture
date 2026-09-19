@@ -1,0 +1,1 @@
+# swift-paginator-architecture
