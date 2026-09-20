@@ -6,7 +6,7 @@
 //
 
 public struct PaginatorConfig {
-    let maxParallelCalls: Int?
+    let maxParallelCalls: Int
     
     // MARK: - In-memory cache properties
     let inMemotyCacheSize: Int
@@ -17,7 +17,7 @@ public struct PaginatorConfig {
     let storeEvictionPolicy: PaginatorEvictionPolicy?
     
     init(
-        maxParallelCalls: Int?,
+        maxParallelCalls: Int = 3,
         inMemotyCacheSize: Int,
         inMemoryEvictionPolicy: PaginatorEvictionPolicy,
         storeCacheSize: Int?,
@@ -36,7 +36,7 @@ public extension PaginatorConfig {
     
     /// Default
     static let `default`: Self = .init(
-        maxParallelCalls: 1,
+        maxParallelCalls: 3,
         inMemotyCacheSize: 5,
         inMemoryEvictionPolicy: .LRU,
         storeCacheSize: nil,

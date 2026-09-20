@@ -15,6 +15,8 @@ public final class CallbackPaginator<
     private let dataSource: DataSource
     /// Controls the data in cache
     private let validator: Validator
+    /// Scheduler
+    private let scheduler: any PaginatorSchedulerProtocol
     /// On-disk cache
     private let onDiskCache: (any PaginatorStore<Item, Key>)?
     private var onDiskPaginatorEvictor: PaginatorEvictor<Key>?
@@ -28,6 +30,7 @@ public final class CallbackPaginator<
         dataSource: DataSource,
         validator: Validator,
         onDiskCache: (any PaginatorStore<Item, Key>)? = nil,
+        scheduler: (any PaginatorSchedulerProtocol)? = nil,
         config: PaginatorConfig = .default
     ) {
         self.dataSource = dataSource
@@ -37,6 +40,9 @@ public final class CallbackPaginator<
         self.inMemoryPaginatorEvictor = PaginatorEvictor(
             policy: config.inMemoryEvictionPolicy,
             maxSize: config.inMemotyCacheSize
+        )
+        self.scheduler = scheduler ?? PaginatorScheduler(
+            maxConcurrentRequests: config.maxParallelCalls
         )
         setupOnDiskPaginatorEvictor()
     }
@@ -50,10 +56,12 @@ public final class CallbackPaginator<
             return page
         }
         
-        let page = try await dataSource.fetch(
-            key: key,
-            pageSize: pageSize
-        )
+        let page = try await scheduler.schedule {
+            try await self.dataSource.fetch(
+                key: key,
+                pageSize: pageSize
+            )
+        }
         
         await cacheInMemory(page, for: key)
         
