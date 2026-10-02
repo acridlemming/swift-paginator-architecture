@@ -5,7 +5,7 @@
 //  Created by Anton Chushialov on 19.09.2026.
 //
 
-public struct PaginatorConfig {
+public struct PaginatorConfig: Sendable {
     let maxParallelCalls: Int
     
     // MARK: - In-memory cache properties

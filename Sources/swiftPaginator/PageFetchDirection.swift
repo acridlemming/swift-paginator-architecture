@@ -6,6 +6,6 @@
 //
 
 /// Directions for page around fetching
-public enum PageFetchDirection {
+public enum PageFetchDirection: Sendable {
     case all, forward, backward
 }

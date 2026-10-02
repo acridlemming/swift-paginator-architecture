@@ -5,7 +5,7 @@
 //  Created by Anton Chushialov on 19.09.2026.
 //
 
-public struct PaginatorEvictor<Key: Hashable & Sendable> {
+public struct PaginatorEvictor<Key: Hashable & Sendable>: Sendable {
 
     private let strategy: any PaginatorEvictionStrategy<Key>
     private let maxSize: Int

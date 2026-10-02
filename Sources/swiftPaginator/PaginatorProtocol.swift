@@ -5,7 +5,7 @@
 //  Created by Anton Chushialov on 19.09.2026.
 //
 
-public protocol PaginatorProtocol<Item, Key> {
+public protocol PaginatorProtocol<Item, Key>: Sendable {
     associatedtype Item
     associatedtype Key
 
@@ -19,7 +19,7 @@ public protocol PaginatorProtocol<Item, Key> {
         pageSize: Int,
         depthLevel: Int,
         direction: PageFetchDirection
-    ) async throws -> PaginatorPage<Item, Key>
+    ) -> AsyncThrowingStream<PaginatorPage<Item, Key>, Error>
 
     func clear(key: Key) async throws
     

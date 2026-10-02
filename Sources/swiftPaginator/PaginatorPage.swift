@@ -6,9 +6,9 @@
 //
 
 /// Data for a single page
-public class PaginatorPage<T, Key> {
+public final class PaginatorPage<T: Sendable, Key: Sendable>: Sendable {
     /// Content of the page
-    let content: [T]
+    public let content: [T]
     /// Page's key
     let key: Key
     /// Expiration time (for cache updates)
@@ -16,9 +16,9 @@ public class PaginatorPage<T, Key> {
     /// Previous key
     let prevKey: Key?
     /// Next key
-    let nextKey: Key?
+    public let nextKey: Key?
     
-    init(
+    public init(
         content: [T],
         key: Key,
         expirationTime: String?,

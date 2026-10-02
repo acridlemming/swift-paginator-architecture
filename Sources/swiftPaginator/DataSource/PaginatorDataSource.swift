@@ -5,7 +5,7 @@
 //  Created by Anton Chushialov on 19.09.2026.
 //
 
-public protocol PaginatorDataSource<T, Key> {
+public protocol PaginatorDataSource<T, Key>: Sendable {
     associatedtype T
     associatedtype Key
     

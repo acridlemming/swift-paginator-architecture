@@ -6,20 +6,19 @@
 //
 
 public final class CallbackPaginator<
-    Item,
-    Key: Hashable,
-    DataSource: PaginatorDataSource<Item, Key>,
-    Validator: PageValidator<Item>
+    Item: Sendable,
+    Key: Hashable & Sendable,
+    DataSource: PaginatorDataSource<Item, Key>
 >: PaginatorProtocol {
     /// Data source to load data
     private let dataSource: DataSource
     /// Controls the data in cache
-    private let validator: Validator
+    private let validator: (any PageValidator<Item>)?
     /// Scheduler
-    private let scheduler: any PaginatorSchedulerProtocol
+    private let scheduler: any PaginatorSchedulerProtocol<Item, Key>
     /// On-disk cache
     private let onDiskCache: (any PaginatorStore<Item, Key>)?
-    private var onDiskPaginatorEvictor: PaginatorEvictor<Key>?
+    private let onDiskPaginatorEvictor: PaginatorEvictor<Key>?
     /// Pagination config
     private let config: PaginatorConfig
     /// In-Memory cache
@@ -28,9 +27,9 @@ public final class CallbackPaginator<
     
     public init(
         dataSource: DataSource,
-        validator: Validator,
+        validator: (any PageValidator<Item>)? = nil,
         onDiskCache: (any PaginatorStore<Item, Key>)? = nil,
-        scheduler: (any PaginatorSchedulerProtocol)? = nil,
+        scheduler: (any PaginatorSchedulerProtocol<Item, Key>)? = nil,
         config: PaginatorConfig = .default
     ) {
         self.dataSource = dataSource
@@ -44,7 +43,12 @@ public final class CallbackPaginator<
         self.scheduler = scheduler ?? PaginatorScheduler(
             maxConcurrentRequests: config.maxParallelCalls
         )
-        setupOnDiskPaginatorEvictor()
+        if let policy = config.storeEvictionPolicy,
+           let size = config.storeCacheSize {
+            self.onDiskPaginatorEvictor = PaginatorEvictor(policy: policy, maxSize: size)
+        } else {
+            self.onDiskPaginatorEvictor = nil
+        }
     }
     
     public func fetch(key: Key, pageSize: Int) async throws -> PaginatorPage<Item, Key> {
@@ -56,7 +60,7 @@ public final class CallbackPaginator<
             return page
         }
         
-        let page = try await scheduler.schedule {
+        let page = try await scheduler.schedule(request: .init(key: key, pageSize: pageSize)) {
             try await self.dataSource.fetch(
                 key: key,
                 pageSize: pageSize
@@ -79,50 +83,51 @@ public final class CallbackPaginator<
         pageSize: Int,
         depthLevel: Int,
         direction: PageFetchDirection
-    ) async throws -> PaginatorPage<Item, Key> {
+    ) -> AsyncThrowingStream<PaginatorPage<Item, Key>, Error> {
 
-        let page = try await fetch(
-            key: key,
-            pageSize: pageSize
-        )
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let page = try await fetch(
+                        key: key,
+                        pageSize: pageSize
+                    )
 
-        guard depthLevel > 0 else {
-            return page
+                    continuation.yield(page)
+
+                    switch direction {
+                    case .forward:
+                        try await streamForward(
+                            from: page,
+                            pageSize: pageSize,
+                            depth: depthLevel,
+                            continuation: continuation
+                        )
+
+                    case .backward:
+                        try await streamBackward(
+                            from: page,
+                            pageSize: pageSize,
+                            depth: depthLevel,
+                            continuation: continuation
+                        )
+
+                    case .all:
+                        // requires a little more thought
+                        break
+                    }
+
+                    continuation.finish()
+
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+
+            continuation.onTermination = { _ in
+                task.cancel()
+            }
         }
-
-        switch direction {
-
-        case .forward:
-            try? await fetchForward(
-                from: page,
-                pageSize: pageSize,
-                depth: depthLevel
-            )
-
-        case .backward:
-            try? await fetchBackward(
-                from: page,
-                pageSize: pageSize,
-                depth: depthLevel
-            )
-
-        case .all:
-            async let forward: Void? = try? fetchForward(
-                from: page,
-                pageSize: pageSize,
-                depth: depthLevel
-            )
-
-            async let backward: Void? = try? fetchBackward(
-                from: page,
-                pageSize: pageSize,
-                depth: depthLevel
-            )
-
-            _ = await (forward, backward)
-        }
-
-        return page
     }
     
     public func clear(key: Key) async throws {
@@ -139,47 +144,63 @@ public final class CallbackPaginator<
 }
 
 private extension CallbackPaginator {
-    func fetchForward(
+    private func streamForward(
         from page: PaginatorPage<Item, Key>,
         pageSize: Int,
-        depth: Int
+        depth: Int,
+        continuation: AsyncThrowingStream<
+            PaginatorPage<Item, Key>,
+            Error
+        >.Continuation
     ) async throws {
 
         var nextKey = page.nextKey
 
         for _ in 0..<depth {
+            try Task.checkCancellation()
+
             guard let key = nextKey else {
-                break
+                return
             }
 
-            let nextPage = try await fetch(
+            let page = try await fetch(
                 key: key,
                 pageSize: pageSize
             )
 
-            nextKey = nextPage.nextKey
+            continuation.yield(page)
+
+            nextKey = page.nextKey
         }
     }
     
-    func fetchBackward(
+    private func streamBackward(
         from page: PaginatorPage<Item, Key>,
         pageSize: Int,
-        depth: Int
+        depth: Int,
+        continuation: AsyncThrowingStream<
+            PaginatorPage<Item, Key>,
+            Error
+        >.Continuation
     ) async throws {
 
-        var previousKey = page.prevKey
+        var prevKey = page.prevKey
 
         for _ in 0..<depth {
-            guard let key = previousKey else {
-                break
+            try Task.checkCancellation()
+
+            guard let key = prevKey else {
+                return
             }
 
-            let previousPage = try await fetch(
+            let page = try await fetch(
                 key: key,
                 pageSize: pageSize
             )
 
-            previousKey = previousPage.prevKey
+            continuation.yield(page)
+
+            prevKey = page.prevKey
         }
     }
     
@@ -221,12 +242,5 @@ private extension CallbackPaginator {
         for key in keysToEvict {
             try await onDiskCache.remove(for: key)
         }
-    }
-    
-    func setupOnDiskPaginatorEvictor() {
-        guard let policy = config.storeEvictionPolicy,
-              let size = config.storeCacheSize
-        else { return }
-        onDiskPaginatorEvictor = PaginatorEvictor(policy: policy, maxSize: size)
     }
 }
